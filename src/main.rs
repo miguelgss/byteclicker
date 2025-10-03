@@ -44,33 +44,33 @@ impl HpSystem {
 #[derive(Clone)]
 struct LevelStatusSystem {
     level: u32,
-    exp: u64,
+    total_exp: u64,
     status_upgrade: Status,
-    exp_needed: u64,
+    base_exp_needed: u64,
     needed_multiplier: u64,
 }
 
 impl LevelStatusSystem {
     fn formula_lvlup(&self) -> u64 {
-        self.exp_needed * self.needed_multiplier.pow(self.level as u32)
+        self.base_exp_needed * (self.needed_multiplier + 1).pow(self.level as u32)
     }
 
-    fn to_next_level(&self) -> u64 {
+    fn to_next_level(&self) -> i64 {
         if self.level < 999 {
-            return self.formula_lvlup() - self.exp;
+            return self.formula_lvlup() as i64 - self.total_exp as i64;
         }
         0
     }
 
     fn update_exp(&mut self, exp: u64) {
-        self.exp += exp;
-        if self.exp > self.formula_lvlup() && self.level < 999 {
+        self.total_exp += exp;
+        if self.total_exp > self.formula_lvlup() && self.level < 999 {
             self.level += 1;
         }
     }
 
     fn given_exp(&self, lvl: u32) -> u64 {
-        self.formula_lvlup() / 20 * clamp(self.level as i64 - lvl as i64, 1, 999) as u64 + 1
+        self.formula_lvlup() / 2 * clamp(self.level as i64 - lvl as i64, 1, 999) as u64 + 1
     }
 
     fn get_upgraded_status(&self) -> Status {
@@ -86,8 +86,8 @@ impl Default for LevelStatusSystem {
     fn default() -> Self {
         Self {
             level: 1,
-            exp: 0,
-            exp_needed: 30,
+            total_exp: 0,
+            base_exp_needed: 30,
             status_upgrade: Status {
                 str: 5,
                 def: 4,
@@ -263,10 +263,17 @@ impl Player {
         false
     }
 
+    fn add_exp_to_pets(&mut self, exp: u64) {
+        for e in self.active_team.active_team.iter_mut() {
+            if let Some(x) = e {
+                x.data.s_level.update_exp(exp);
+            }
+        }
+    }
+
     fn get_power(&mut self) -> i64 {
         let mut dmg: i64 = 0;
         dmg = dmg + self.active_team.get_team_power().str as i64;
-        print!("POWER: {}", dmg);
         dmg
     }
 }
@@ -279,7 +286,6 @@ struct Scene {
 
 impl Scene {
     fn do_damage(&mut self, dmg: i64) -> Option<&Battler> {
-        print!("dmg value: {}", dmg);
         self.active_enemy.s_hp.do_damage(dmg);
         self.check_enemy_defeated()
     }
@@ -304,6 +310,18 @@ impl Scene {
 struct GameState {
     player: Player,
     scene: Scene,
+}
+
+impl GameState {
+    fn manual_dmg(&mut self) {
+        let e = self.scene.do_damage(self.player.get_power());
+        self.player.clicks += 1;
+
+        if let Some(x) = e {
+            self.player.add_exp_to_pets(x.data.s_level.given_exp(1));
+            self.player.total_defeated += 1;
+        }
+    }
 }
 
 fn window_conf() -> Conf {
@@ -336,11 +354,6 @@ async fn main() {
         scene: initial_scene,
     };
 
-    let t: u8 = 10;
-    let m: u8 = 15;
-
-    let c = clamp(t as i16 - m as i16, 1, 20);
-    println!("{}", c);
     loop {
         clear_background(BLACK);
         update(&mut gs).await;
@@ -351,12 +364,7 @@ async fn main() {
 
 async fn update(gs: &mut GameState) {
     if is_key_pressed(KeyCode::G) || is_mouse_button_pressed(MouseButton::Left) {
-        let e = gs.scene.do_damage(gs.player.get_power());
-        gs.player.clicks += 1;
-
-        if let Some(_) = e {
-            gs.player.total_defeated += 1;
-        }
+        gs.manual_dmg();
     }
 }
 
@@ -384,6 +392,7 @@ async fn draw(gs: &mut GameState) {
     draw_rectangle_lines(5., 4., screen_width() - 10., 60., 2., GREEN);
 
     draw_enemy(gs).await;
+    draw_allies_data(gs).await;
 }
 
 async fn draw_enemy(gs: &mut GameState) {
@@ -419,4 +428,36 @@ async fn draw_enemy(gs: &mut GameState) {
         RED,
     );
     draw_circle_lines(screen_width() / 2., screen_height() / 4., 80., 4., RED);
+}
+
+async fn draw_allies_data(gs: &mut GameState) {
+    for e in gs.player.active_team.active_team.iter() {
+        if let Some(x) = e {
+            draw_text(
+                &format!(
+                    "{} / EXP: {:?}/NEXT: {:?} - LVL: {:?}",
+                    x.name,
+                    x.data.s_level.total_exp,
+                    x.data.s_level.to_next_level(),
+                    x.data.s_level.level
+                ),
+                20.,
+                400.,
+                18.,
+                BLUE,
+            );
+
+            let power_data = x.data.get_power();
+            draw_text(
+                &format!(
+                    "STR: {:?} / DEF: {:?} / SPEED: {:?}",
+                    power_data.str, power_data.def, power_data.speed,
+                ),
+                20.,
+                420.,
+                18.,
+                BLUE,
+            );
+        }
+    }
 }

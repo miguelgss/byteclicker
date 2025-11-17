@@ -1,4 +1,5 @@
 use macroquad::prelude::*;
+use rand::RandGenerator;
 
 #[derive(Clone, Debug)]
 enum ELevel {
@@ -22,6 +23,15 @@ struct HpSystem {
 }
 
 impl HpSystem {
+    fn new_rand_hp() -> Self {
+        const RNG: rand::RandGenerator = rand::RandGenerator::new();
+        let hp_base = RNG.gen_range(100, 1000);
+        Self {
+            hp_base,
+            hp: hp_base,
+        }
+    }
+
     fn update_hp(&mut self, value: i64) {
         if value >= 0 {
             self.hp = clamp(self.hp + value as u64, 0, self.hp_base);
@@ -127,6 +137,15 @@ impl Status {
 
         self
     }
+
+    fn rand_status() -> Self {
+        let RNG = rand::RandGenerator::new();
+        Self {
+            str: RNG.gen_range(5, 25),
+            def: RNG.gen_range(5, 25),
+            speed: RNG.gen_range(5, 25),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -188,10 +207,7 @@ struct Battler {
 
 impl Default for Battler {
     fn default() -> Self {
-        let new_hp = HpSystem {
-            hp_base: 200,
-            hp: 200,
-        };
+        let new_hp = HpSystem::new_rand_hp();
         Self {
             s_hp: new_hp,
             name: "PHoldermon".to_owned(),
@@ -285,15 +301,16 @@ struct Scene {
 }
 
 impl Scene {
-    fn do_damage(&mut self, dmg: i64) -> Option<&Battler> {
+    fn do_damage(&mut self, dmg: i64) -> Option<Battler> {
         self.active_enemy.s_hp.do_damage(dmg);
         self.check_enemy_defeated()
     }
 
-    fn check_enemy_defeated(&mut self) -> Option<&Battler> {
+    fn check_enemy_defeated(&mut self) -> Option<Battler> {
         if !self.active_enemy.s_hp.is_alive() {
+            let past_enemy = self.active_enemy.clone();
             self.new_enemy();
-            return Some(&self.active_enemy);
+            return Some(past_enemy);
         }
         None
     }
@@ -303,16 +320,19 @@ impl Scene {
             self.active_enemy = x.clone();
         }
     }
-
-    fn auto_damage(&mut self, dt: f64) {}
 }
 
 struct GameState {
     player: Player,
     scene: Scene,
+    frame_time: f64,
 }
 
 impl GameState {
+    fn update_time(&mut self, dt: f64) {
+        self.frame_time += dt;
+    }
+
     fn manual_dmg(&mut self) {
         let e = self.scene.do_damage(self.player.get_power());
         self.player.clicks += 1;
@@ -320,6 +340,14 @@ impl GameState {
         if let Some(x) = e {
             self.player.add_exp_to_pets(x.data.s_level.given_exp(1));
             self.player.total_defeated += 1;
+        }
+    }
+
+    fn auto_dmg(&mut self, dt: f64) {
+        self.update_time(dt);
+        if self.frame_time >= 0.6 {
+            self.frame_time -= 0.6;
+            self.manual_dmg();
         }
     }
 }
@@ -347,11 +375,22 @@ async fn main() {
         ..Default::default()
     };
 
+    let pet2 = Battler {
+        name: "Bertrano".to_owned(),
+        ..Default::default()
+    };
+    let pet3 = Battler {
+        name: "Fipongo".to_owned(),
+        ..Default::default()
+    };
     player.add_pet(Battler::default());
+    player.add_pet(pet2);
+    player.add_pet(pet3);
 
     let mut gs = GameState {
         player,
         scene: initial_scene,
+        frame_time: 0.,
     };
 
     loop {
@@ -365,6 +404,10 @@ async fn main() {
 async fn update(gs: &mut GameState) {
     if is_key_pressed(KeyCode::G) || is_mouse_button_pressed(MouseButton::Left) {
         gs.manual_dmg();
+    }
+
+    if is_key_down(KeyCode::A) {
+        gs.auto_dmg(get_frame_time() as f64);
     }
 }
 
@@ -431,7 +474,7 @@ async fn draw_enemy(gs: &mut GameState) {
 }
 
 async fn draw_allies_data(gs: &mut GameState) {
-    for e in gs.player.active_team.active_team.iter() {
+    for (i, e) in gs.player.active_team.active_team.iter().enumerate() {
         if let Some(x) = e {
             draw_text(
                 &format!(
@@ -442,7 +485,7 @@ async fn draw_allies_data(gs: &mut GameState) {
                     x.data.s_level.level
                 ),
                 20.,
-                400.,
+                400. + (45. * i as f32),
                 18.,
                 BLUE,
             );
@@ -454,7 +497,7 @@ async fn draw_allies_data(gs: &mut GameState) {
                     power_data.str, power_data.def, power_data.speed,
                 ),
                 20.,
-                420.,
+                420. + 45. * i as f32,
                 18.,
                 BLUE,
             );
